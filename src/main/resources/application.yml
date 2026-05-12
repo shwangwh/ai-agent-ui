@@ -1,0 +1,16 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ui-automation-test-agent
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+agent:
+  storage-root: data
+  parser:
+    executable-threshold: 0.85
+    review-threshold: 0.60
