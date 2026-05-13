@@ -1,6 +1,6 @@
 # Apifox 操作指南
 
-本文档说明如何通过 Apifox 调用当前 UI 自动化测试 Agent 后端项目。
+本文档说明如何通过 Apifox 调用 UI 自动化测试 Agent 后端。
 
 当前服务地址：
 
@@ -11,7 +11,13 @@ http://localhost:8080
 如果服务没有启动，先在项目目录运行：
 
 ```bash
-mvn spring-boot:run
+.venv\Scripts\uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
+```
+
+首次执行真实浏览器用例前，需要安装 Playwright 浏览器驱动：
+
+```bash
+.venv\Scripts\python -m playwright install chromium
 ```
 
 ## 1. 配置环境变量
@@ -28,7 +34,34 @@ baseUrl = http://localhost:8080
 {{baseUrl}}/api/v1/...
 ```
 
-## 2. 上传 Markdown 用例
+## 2. 配置被测环境
+
+默认已内置 `test` 环境：
+
+```json
+{
+  "environmentCode": "test",
+  "baseUrl": "http://localhost:3000",
+  "domainWhitelist": ["localhost"]
+}
+```
+
+如果需要修改：
+
+```http
+POST {{baseUrl}}/api/v1/config/environments
+Content-Type: application/json
+```
+
+```json
+{
+  "environmentCode": "test",
+  "baseUrl": "http://localhost:3000",
+  "domainWhitelist": ["localhost"]
+}
+```
+
+## 3. 上传 Markdown 用例
 
 接口：
 
@@ -49,14 +82,16 @@ value: 选择一个 .md 文件
 ```json
 {
   "documentId": "doc_xxx",
-  "fileName": "xxx.md",
+  "fileName": "cases.md",
+  "fileSize": 1024,
+  "createdAt": "2026-05-13T10:00:00+08:00",
   "message": "文档上传成功"
 }
 ```
 
 将返回的 `documentId` 保存为 Apifox 环境变量。
 
-## 3. 创建解析任务
+## 4. 创建解析任务
 
 接口：
 
@@ -85,7 +120,7 @@ Body：
 
 这里返回的 `taskId` 就是 `parseTaskId`，将它保存为 Apifox 环境变量。
 
-## 4. 查询解析结果
+## 5. 查询解析结果
 
 接口：
 
@@ -93,22 +128,21 @@ Body：
 GET {{baseUrl}}/api/v1/parse-tasks/{{parseTaskId}}/cases
 ```
 
-响应示例：
+重点查看：
 
-```json
-[
-  {
-    "caseId": "ORDER_001",
-    "caseName": "用户成功提交订单",
-    "steps": [],
-    "expectedResults": [],
-    "parseConfidence": 0.9,
-    "status": "executable"
-  }
-]
+```text
+caseId
+caseName
+steps
+expectedResults
+parseConfidence
+status
+uncertainItems
 ```
 
-## 5. 确认或修正用例
+只有 `status=executable` 的用例会进入真实执行。
+
+## 6. 确认或修正用例
 
 接口：
 
@@ -142,8 +176,8 @@ Content-Type: application/json
       "module": "点餐下单",
       "priority": "P0",
       "preconditions": ["用户已登录"],
-      "steps": ["打开菜单页", "点击菜品“宫保鸡丁”", "点击提交订单按钮"],
-      "expectedResults": ["订单提交成功", "页面展示订单号"]
+      "steps": ["打开 /", "点击“宫保鸡丁”", "点击“提交订单”"],
+      "expectedResults": ["显示“订单提交成功”", "无报错"]
     }
   ]
 }
@@ -159,7 +193,7 @@ mark_invalid
 save
 ```
 
-## 6. 创建执行任务
+## 7. 创建执行任务
 
 接口：
 
@@ -195,48 +229,83 @@ Body：
 {
   "taskId": "exec_xxx",
   "status": "finished",
-  "message": "执行完成，Allure 报告元数据已生成"
+  "message": "执行完成，报告和证据已生成"
 }
 ```
 
 将返回的 `taskId` 保存为 `executionTaskId`。
 
-## 7. 查询执行结果
-
-接口：
+## 8. 查询执行任务
 
 ```http
 GET {{baseUrl}}/api/v1/execution-tasks/{{executionTaskId}}
 ```
 
-## 8. 查询用例执行明细
+重点查看：
 
-接口：
+```text
+totalCases
+passed
+failed
+blocked
+locatorUnresolved
+allureReportUrl
+jsonResultUrl
+```
+
+## 9. 查询用例执行明细
 
 ```http
 GET {{baseUrl}}/api/v1/execution-tasks/{{executionTaskId}}/cases
 ```
 
-## 9. 查询日志
+每条用例会返回：
 
-接口：
+```text
+steps
+assertions
+evidenceUrls
+failureReason
+durationMs
+```
+
+## 10. 查询日志
 
 ```http
 GET {{baseUrl}}/api/v1/execution-tasks/{{executionTaskId}}/logs
 ```
 
-按日志级别过滤：
+常用过滤：
 
 ```http
 GET {{baseUrl}}/api/v1/execution-tasks/{{executionTaskId}}/logs?level=INFO
+GET {{baseUrl}}/api/v1/execution-tasks/{{executionTaskId}}/logs?event=STEP_EXECUTION_FINISHED
 ```
 
-## 10. 查询报告信息
-
-接口：
+## 11. 查询报告信息
 
 ```http
 GET {{baseUrl}}/api/v1/execution-tasks/{{executionTaskId}}/report
 ```
 
-当前返回的是 Allure 报告元数据，真实 Allure 页面还没有接入生成。
+响应中的 `allureReportUrl` 可以直接在浏览器访问，例如：
+
+```text
+http://localhost:8080/reports/allure/{{executionTaskId}}/index.html
+```
+
+## 12. 查询附件
+
+```http
+GET {{baseUrl}}/api/v1/execution-tasks/{{executionTaskId}}/artifacts
+```
+
+常见附件：
+
+```text
+screenshots/final.png
+trace.zip
+console.json
+network.json
+summary.json
+```
