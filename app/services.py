@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,6 +19,7 @@ from app.models import (
     ExecutionCaseResult,
     ExecutionStatus,
     ExecutionTask,
+    LLMCallLog,
     LogLevel,
     ParseStatus,
     ParseTask,
@@ -37,6 +40,7 @@ from app.runner import ExecutionContext, PlaywrightExecutionRunner
 class TaskLogService:
     def __init__(self, store: AgentStore) -> None:
         self.store = store
+        self.logger = logging.getLogger("app.task")
 
     def log(
         self,
@@ -49,19 +53,30 @@ class TaskLogService:
         message: str,
         attributes: dict[str, Any] | None = None,
     ) -> None:
-        self.store.add_log(
-            TaskLog(
-                logId=next_id("log"),
-                level=level,
-                traceId=trace_id,
-                taskId=task_id,
-                caseRunId=case_run_id,
-                stepRunId=step_run_id,
-                event=event,
-                message=message,
-                attributes=attributes or {},
-                timestamp=now(),
-            )
+        task_log = TaskLog(
+            logId=next_id("log"),
+            level=level,
+            traceId=trace_id,
+            taskId=task_id,
+            caseRunId=case_run_id,
+            stepRunId=step_run_id,
+            event=event,
+            message=message,
+            attributes=attributes or {},
+            timestamp=now(),
+        )
+        self.store.add_log(task_log)
+        self.logger.log(
+            self._to_logging_level(level),
+            message,
+            extra={
+                "traceId": task_log.traceId,
+                "taskId": task_log.taskId,
+                "caseRunId": task_log.caseRunId,
+                "stepRunId": task_log.stepRunId,
+                "event": task_log.event,
+                "attributes": task_log.attributes,
+            },
         )
 
     def find_logs(
@@ -80,6 +95,107 @@ class TaskLogService:
             and (step_run_id is None or log.stepRunId == step_run_id)
             and (level is None or log.level == level)
             and (event is None or log.event.lower() == event.lower())
+        ]
+
+    def _to_logging_level(self, level: LogLevel) -> int:
+        if level == LogLevel.DEBUG:
+            return logging.DEBUG
+        if level == LogLevel.WARN:
+            return logging.WARNING
+        if level == LogLevel.ERROR:
+            return logging.ERROR
+        return logging.INFO
+
+
+class LLMLogService:
+    def __init__(self, store: AgentStore, storage_root: str = "data") -> None:
+        self.store = store
+        self.storage_root = Path(storage_root).absolute()
+        self.log_dir = self.storage_root / "llm-logs"
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_file = self.log_dir / "llm-calls.jsonl"
+        self.log_file.touch(exist_ok=True)
+        self.logger = logging.getLogger("app.llm")
+
+    def log(
+        self,
+        *,
+        trace_id: str,
+        task_id: str,
+        operation: str,
+        model: str,
+        endpoint: str,
+        success: bool,
+        duration_ms: int,
+        request_payload: dict[str, Any],
+        response_payload: dict[str, Any] | None = None,
+        raw_response: str | None = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
+        document_id: str | None = None,
+        parse_task_id: str | None = None,
+        case_id: str | None = None,
+        case_run_id: str | None = None,
+        step_run_id: str | None = None,
+    ) -> LLMCallLog:
+        llm_log = LLMCallLog(
+            logId=next_id("llm_log"),
+            traceId=trace_id,
+            taskId=task_id,
+            operation=operation,
+            model=model,
+            endpoint=endpoint,
+            success=success,
+            durationMs=duration_ms,
+            documentId=document_id,
+            parseTaskId=parse_task_id,
+            caseId=case_id,
+            caseRunId=case_run_id,
+            stepRunId=step_run_id,
+            requestPayload=request_payload,
+            responsePayload=response_payload,
+            rawResponse=raw_response,
+            errorType=error_type,
+            errorMessage=error_message,
+            timestamp=now(),
+        )
+        self.store.add_llm_log(llm_log)
+        with self.log_file.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(llm_log.model_dump(mode="json"), ensure_ascii=False, default=str) + "\n")
+        self.logger.log(
+            logging.INFO if success else logging.ERROR,
+            f"LLM {operation} {'succeeded' if success else 'failed'}",
+            extra={
+                "traceId": llm_log.traceId,
+                "taskId": llm_log.taskId,
+                "caseRunId": llm_log.caseRunId,
+                "stepRunId": llm_log.stepRunId,
+                "operation": llm_log.operation,
+                "model": llm_log.model,
+                "endpoint": llm_log.endpoint,
+                "success": llm_log.success,
+                "durationMs": llm_log.durationMs,
+                "errorType": llm_log.errorType,
+            },
+        )
+        return llm_log
+
+    def find_logs(
+        self,
+        task_id: str,
+        case_run_id: str | None = None,
+        step_run_id: str | None = None,
+        success: bool | None = None,
+        operation: str | None = None,
+    ) -> list[LLMCallLog]:
+        logs = self.store.find_llm_logs(task_id)
+        return [
+            log
+            for log in logs
+            if (case_run_id is None or log.caseRunId == case_run_id)
+            and (step_run_id is None or log.stepRunId == step_run_id)
+            and (success is None or log.success == success)
+            and (operation is None or log.operation.lower() == operation.lower())
         ]
 
 
@@ -282,11 +398,14 @@ class ExecutionTaskService:
         self.reports = reports or ReportGenerator()
         self.environment_resolver = environment_resolver or (lambda code: None)
         self.runner = runner or PlaywrightExecutionRunner(logs, self.evidence)
+        self.logger = logging.getLogger("app.execution")
 
     def create(self, request: CreateExecutionTaskRequest) -> ExecutionTask:
         parse_task = self.parse_tasks.get_parse_task(request.parseTaskId)
         if parse_task.documentId != request.documentId:
             raise BadRequestError("documentId 与 parseTaskId 不匹配")
+        if parse_task.status != TaskStatus.finished:
+            raise BadRequestError(parse_task.message or "解析任务未完成，不能创建执行任务")
         environment_code = request.environmentCode or "test"
         environment = self.environment_resolver(environment_code)
         if environment is None:
@@ -322,9 +441,20 @@ class ExecutionTaskService:
             {"environmentCode": task.environmentCode, "browser": task.browser, "runMode": task.runMode},
         )
 
+        self.logger.info(
+            "Execution task is starting",
+            extra={
+                "taskId": task_id,
+                "documentId": task.documentId,
+                "parseTaskId": task.parseTaskId,
+                "environmentCode": task.environmentCode,
+                "browser": task.browser,
+                "headless": task.headless,
+                "totalCandidateCases": len(cases),
+            },
+        )
         context = ExecutionContext(
             base_url=str(environment.get("baseUrl") or ""),
-            domain_whitelist=list(environment.get("domainWhitelist") or []),
         )
         try:
             results = [self._run_case(task, test_case, context) for test_case in cases]

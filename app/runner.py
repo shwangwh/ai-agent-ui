@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,7 +26,6 @@ from app.models import (
 @dataclass
 class ExecutionContext:
     base_url: str
-    domain_whitelist: list[str]
 
 
 class SensitiveDataMasker:
@@ -122,6 +122,7 @@ class PlaywrightExecutionRunner:
         self.locators = LocatorResolver()
         self.masker = SensitiveDataMasker()
         self.recorder = EvidenceRecorder(evidence, logs)
+        self.logger = logging.getLogger("app.runner")
 
     def run_case(self, task: ExecutionTask, test_case: ParsedTestCase, context: ExecutionContext) -> ExecutionCaseResult:
         started_at = now()
@@ -192,7 +193,13 @@ class PlaywrightExecutionRunner:
                             break
 
                     if result.status is None:
-                        result.assertions = self._execute_assertions(page, test_case, console_messages)
+                        result.assertions = self._execute_assertions(
+                            page,
+                            task.taskId,
+                            case_run_id,
+                            test_case,
+                            console_messages,
+                        )
                         failed = next((item for item in result.assertions if item.status != ExecutionStatus.passed), None)
                         if failed:
                             result.status = failed.status
@@ -230,11 +237,24 @@ class PlaywrightExecutionRunner:
         started_at = now()
         step_run_id = next_id("step_run")
         page_state = self._page_state(page)
-        plan = self.agent.plan_step(step, test_case, page_state)
+        plan = self.agent.plan_step(task_id, case_run_id, step_run_id, step, test_case, page_state)
         action = plan.action
         target = plan.target or plan.url
         status = ExecutionStatus.passed
         message = plan.rationale or "LLM plan executed"
+        self.logger.info(
+            "Step execution started",
+            extra={
+                "taskId": task_id,
+                "caseRunId": case_run_id,
+                "stepRunId": step_run_id,
+                "caseId": test_case.caseId,
+                "stepIndex": index,
+                "stepText": self.masker.mask(step),
+                "action": action,
+                "target": self.masker.mask(target),
+            },
+        )
 
         try:
             if action == "goto":
@@ -286,13 +306,15 @@ class PlaywrightExecutionRunner:
     def _execute_assertions(
         self,
         page: Any,
+        task_id: str,
+        case_run_id: str,
         test_case: ParsedTestCase,
         console_messages: list[dict[str, str]],
     ) -> list[AssertionResult]:
         assertions: list[AssertionResult] = []
         console_errors = [item["text"] for item in console_messages if item["type"] == "error"]
         for expected in test_case.expectedResults:
-            plan = self.agent.plan_assertion(expected, test_case, self._page_state(page))
+            plan = self.agent.plan_assertion(task_id, case_run_id, expected, test_case, self._page_state(page))
             status = ExecutionStatus.passed
             actual = plan.rationale or "Assertion passed"
             try:
@@ -360,17 +382,7 @@ class PlaywrightExecutionRunner:
             url = value
         else:
             url = f"{context.base_url.rstrip('/')}/{value.lstrip('/')}"
-        self._validate_url(url, context)
         return url
-
-    def _validate_url(self, url: str, context: ExecutionContext) -> None:
-        if not context.domain_whitelist:
-            return
-        host = urlparse(url).hostname
-        if not host:
-            return
-        if not any(host == domain or host.endswith(f".{domain}") for domain in context.domain_whitelist):
-            raise ValueError(f"Target host is outside domain whitelist: {host}")
 
     def _finalize(
         self,

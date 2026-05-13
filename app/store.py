@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from app.models import ExecutionCaseResult, ExecutionTask, ParseTask, ParsedTestCase, TaskLog, TestDocument
+from app.models import ExecutionCaseResult, ExecutionTask, LLMCallLog, ParseTask, ParsedTestCase, TaskLog, TestDocument
 
 
 class InMemoryAgentStore:
@@ -13,6 +13,7 @@ class InMemoryAgentStore:
         self.execution_tasks: dict[str, ExecutionTask] = {}
         self.execution_cases_by_task: dict[str, list[ExecutionCaseResult]] = {}
         self.logs_by_task: dict[str, list[TaskLog]] = defaultdict(list)
+        self.llm_logs_by_task: dict[str, list[LLMCallLog]] = defaultdict(list)
 
     def save_document(self, document: TestDocument) -> TestDocument:
         self.documents[document.documentId] = document
@@ -52,3 +53,9 @@ class InMemoryAgentStore:
 
     def find_logs(self, task_id: str) -> list[TaskLog]:
         return sorted(self.logs_by_task.get(task_id, []), key=lambda log: log.timestamp)
+
+    def add_llm_log(self, log: LLMCallLog) -> None:
+        self.llm_logs_by_task[log.taskId].append(log)
+
+    def find_llm_logs(self, task_id: str) -> list[LLMCallLog]:
+        return sorted(self.llm_logs_by_task.get(task_id, []), key=lambda log: log.timestamp)

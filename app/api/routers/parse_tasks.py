@@ -20,6 +20,17 @@ def get_parse_cases(parse_task_id: str, container: AppContainer = Depends(get_co
     return container.parse_tasks.get_cases(parse_task_id)
 
 
+@router.get("/{parse_task_id}/llm-logs")
+def get_parse_llm_logs(
+    parse_task_id: str,
+    success: bool | None = None,
+    operation: str | None = None,
+    container: AppContainer = Depends(get_container),
+):
+    container.parse_tasks.get_parse_task(parse_task_id)
+    return container.llm_logs.find_logs(parse_task_id, success=success, operation=operation)
+
+
 @router.post("/{parse_task_id}/confirm")
 def confirm_parse_cases(
     parse_task_id: str,

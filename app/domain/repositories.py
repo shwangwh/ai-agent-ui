@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.models import ExecutionCaseResult, ExecutionTask, ParseTask, ParsedTestCase, TaskLog, TestDocument
+from app.models import ExecutionCaseResult, ExecutionTask, LLMCallLog, ParseTask, ParsedTestCase, TaskLog, TestDocument
 
 
 class AgentStore(Protocol):
@@ -29,3 +29,7 @@ class AgentStore(Protocol):
     def add_log(self, log: TaskLog) -> None: ...
 
     def find_logs(self, task_id: str) -> list[TaskLog]: ...
+
+    def add_llm_log(self, log: LLMCallLog) -> None: ...
+
+    def find_llm_logs(self, task_id: str) -> list[LLMCallLog]: ...

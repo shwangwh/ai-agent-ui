@@ -47,6 +47,19 @@ def get_execution_logs(
     return container.logs.find_logs(task_id, caseRunId, stepRunId, level, event)
 
 
+@router.get("/{task_id}/llm-logs")
+def get_execution_llm_logs(
+    task_id: str,
+    caseRunId: str | None = None,
+    stepRunId: str | None = None,
+    success: bool | None = None,
+    operation: str | None = None,
+    container: AppContainer = Depends(get_container),
+):
+    container.execution_tasks.get(task_id)
+    return container.llm_logs.find_logs(task_id, caseRunId, stepRunId, success, operation)
+
+
 @router.get("/{task_id}/report")
 def get_execution_report(task_id: str, container: AppContainer = Depends(get_container)):
     return container.execution_tasks.get_report(task_id)

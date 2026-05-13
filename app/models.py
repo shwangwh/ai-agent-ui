@@ -255,3 +255,25 @@ class TaskLog(AgentModel):
     message: str
     attributes: dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime
+
+
+class LLMCallLog(AgentModel):
+    logId: str
+    traceId: str
+    taskId: str
+    operation: str
+    model: str
+    endpoint: str
+    success: bool
+    durationMs: int
+    documentId: str | None = None
+    parseTaskId: str | None = None
+    caseId: str | None = None
+    caseRunId: str | None = None
+    stepRunId: str | None = None
+    requestPayload: dict[str, Any] = Field(default_factory=dict)
+    responsePayload: dict[str, Any] | None = None
+    rawResponse: str | None = None
+    errorType: str | None = None
+    errorMessage: str | None = None
+    timestamp: datetime

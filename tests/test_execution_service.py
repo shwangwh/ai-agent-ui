@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from app.evidence import EvidenceCollector
@@ -25,10 +26,25 @@ class FakeLLMAgent:
     def parse_cases(self, document_id: str, parse_task_id: str, markdown: str) -> list[ParsedTestCase]:
         return []
 
-    def plan_step(self, step: str, case: ParsedTestCase, page_state: dict[str, Any]) -> StepPlan:
+    def plan_step(
+        self,
+        task_id: str,
+        case_run_id: str,
+        step_run_id: str,
+        step: str,
+        case: ParsedTestCase,
+        page_state: dict[str, Any],
+    ) -> StepPlan:
         return StepPlan(action="blocked", rationale="not used")
 
-    def plan_assertion(self, expected: str, case: ParsedTestCase, page_state: dict[str, Any]) -> AssertionPlan:
+    def plan_assertion(
+        self,
+        task_id: str,
+        case_run_id: str,
+        expected: str,
+        case: ParsedTestCase,
+        page_state: dict[str, Any],
+    ) -> AssertionPlan:
         return AssertionPlan(assertionType="text_visible", expected=expected)
 
 
@@ -149,3 +165,48 @@ def test_execution_task_is_marked_failed_when_runner_crashes(tmp_path):
     assert "browser crashed" in (task.message or "")
     logs = service.logs.find_logs(task.taskId)
     assert any(log.event == "EXECUTION_TASK_FAILED" and log.level == "ERROR" for log in logs)
+
+
+def test_task_logs_are_forwarded_to_python_logging(tmp_path, caplog):
+    service, _ = build_service(tmp_path)
+
+    with caplog.at_level(logging.INFO, logger="app.task"):
+        service.logs.log(
+            level="INFO",
+            trace_id="trace_1",
+            task_id="task_1",
+            case_run_id="case_1",
+            step_run_id="step_1",
+            event="STEP_EXECUTION_FINISHED",
+            message="step done",
+            attributes={"status": "passed"},
+        )
+
+    assert any(record.message == "step done" for record in caplog.records)
+    log_record = next(record for record in caplog.records if record.message == "step done")
+    assert log_record.taskId == "task_1"
+    assert log_record.caseRunId == "case_1"
+    assert log_record.stepRunId == "step_1"
+    assert log_record.event == "STEP_EXECUTION_FINISHED"
+
+
+def test_execution_rejects_failed_parse_task(tmp_path):
+    service, _ = build_service(tmp_path)
+    store = service.store
+    store.save_parse_task(
+        ParseTask(
+            parseTaskId="parse_failed",
+            documentId="doc_1",
+            status=TaskStatus.failed,
+            createdAt=now(),
+            finishedAt=now(),
+            message="解析失败: schema mismatch",
+        )
+    )
+
+    try:
+        service.create(CreateExecutionTaskRequest(documentId="doc_1", parseTaskId="parse_failed"))
+    except Exception as exc:
+        assert "解析失败" in str(exc)
+    else:
+        raise AssertionError("expected create() to reject failed parse task")

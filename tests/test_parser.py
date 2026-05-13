@@ -24,10 +24,25 @@ class FakeLLMAgent:
             )
         ]
 
-    def plan_step(self, step: str, case: ParsedTestCase, page_state: dict[str, Any]) -> StepPlan:
+    def plan_step(
+        self,
+        task_id: str,
+        case_run_id: str,
+        step_run_id: str,
+        step: str,
+        case: ParsedTestCase,
+        page_state: dict[str, Any],
+    ) -> StepPlan:
         return StepPlan(action="blocked", rationale="not used")
 
-    def plan_assertion(self, expected: str, case: ParsedTestCase, page_state: dict[str, Any]) -> AssertionPlan:
+    def plan_assertion(
+        self,
+        task_id: str,
+        case_run_id: str,
+        expected: str,
+        case: ParsedTestCase,
+        page_state: dict[str, Any],
+    ) -> AssertionPlan:
         return AssertionPlan(assertionType="text_visible", expected=expected)
 
 
